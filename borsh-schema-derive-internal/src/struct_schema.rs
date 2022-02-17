@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, ToTokens};
-use syn::{Fields, Ident, ItemStruct};
+use syn::{Fields, Ident, ItemStruct, WhereClause};
 
 use crate::helpers::{contains_skip, declaration};
 
@@ -8,7 +8,7 @@ pub fn process_struct(input: &ItemStruct, cratename: Ident) -> syn::Result<Token
     let name = &input.ident;
     let name_str = name.to_token_stream().to_string();
     let generics = &input.generics;
-    let (impl_generics, ty_generics, _) = generics.split_for_impl();
+    let (impl_generics, ty_generics, orig_where_clause) = generics.split_for_impl();
     // Generate function that returns the name of the type.
     let (declaration, mut where_clause) =
         declaration(&name_str, &input.generics, cratename.clone());
@@ -80,8 +80,18 @@ pub fn process_struct(input: &ItemStruct, cratename: Ident) -> syn::Result<Token
             #add_definitions_recursively_rec
         }
     };
+    // The original where clause might already have a trailing punctuation
+    let orig_where_clause = if let Some(WhereClause{predicates, where_token: _, }) = orig_where_clause {
+        if predicates.trailing_punct() {
+            quote! {#predicates}
+        } else {
+            quote! {#predicates,}
+        }
+    } else {
+        TokenStream2::new()
+    };
     let where_clause = if !where_clause.is_empty() {
-        quote! { where #(#where_clause),*}
+        quote! { where #orig_where_clause #(#where_clause),*}
     } else {
         TokenStream2::new()
     };
@@ -316,6 +326,57 @@ mod tests {
         let expected = quote!{
             impl<K, V> borsh::BorshSchema for A<K, V>
             where
+                K: borsh::BorshSchema,
+                V: borsh::BorshSchema,
+                HashMap<K, V>: borsh::BorshSchema,
+                String: borsh::BorshSchema
+            {
+                fn declaration() -> borsh::schema::Declaration {
+                    let params = borsh::maybestd::vec![<K>::declaration(), <V>::declaration()];
+                    format!(r#"{}<{}>"#, "A", params.join(", "))
+                }
+                fn add_definitions_recursively(
+                    definitions: &mut borsh::maybestd::collections::HashMap<
+                        borsh::schema::Declaration,
+                        borsh::schema::Definition
+                    >
+                ) {
+                    let fields = borsh::schema::Fields::NamedFields(borsh::maybestd::vec![
+                        ("x".to_string(), <HashMap<K, V> >::declaration()),
+                        ("y".to_string(), <String>::declaration())
+                    ]);
+                    let definition = borsh::schema::Definition::Struct { fields };
+                    Self::add_definition(Self::declaration(), definition, definitions);
+                    <HashMap<K, V> >::add_definitions_recursively(definitions);
+                    <String>::add_definitions_recursively(definitions);
+                }
+            }
+        };
+        assert_eq(expected, actual);
+    }
+
+    #[test]
+    fn trailing_comma_generics() {
+        let item_struct: ItemStruct = syn::parse2(quote!{
+            struct A<K, V> 
+            where 
+                K: Display + Debug, 
+            {
+                x: HashMap<K, V>,
+                y: String,
+            }
+        })
+        .unwrap();
+
+        let actual = process_struct(
+            &item_struct,
+            Ident::new("borsh", proc_macro2::Span::call_site()),
+        )
+        .unwrap();
+        let expected = quote!{
+            impl<K, V> borsh::BorshSchema for A<K, V>
+            where
+                K: Display + Debug,
                 K: borsh::BorshSchema,
                 V: borsh::BorshSchema,
                 HashMap<K, V>: borsh::BorshSchema,

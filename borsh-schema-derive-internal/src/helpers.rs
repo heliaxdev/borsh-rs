@@ -18,14 +18,9 @@ pub fn declaration(
     generics: &Generics,
     cratename: Ident,
 ) -> (TokenStream2, Vec<TokenStream2>) {
-    let (_, _, where_clause_generics) = generics.split_for_impl();
     // Generate function that returns the name of the type.
     let mut declaration_params = vec![];
     let mut where_clause = vec![];
-    if let Some(where_clause_generics) = where_clause_generics {
-        let where_clause_generics = &where_clause_generics.predicates;
-        where_clause.push(quote! {#where_clause_generics});
-    }
     for type_param in generics.type_params() {
         let type_param_name = &type_param.ident;
         declaration_params.push(quote! {

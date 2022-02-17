@@ -2,7 +2,7 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
 use syn::{
     parse_quote, AttrStyle, Attribute, Field, Fields, FieldsUnnamed, Ident, ItemEnum, ItemStruct,
-    Visibility,
+    Visibility, WhereClause,
 };
 
 use crate::helpers::declaration;
@@ -11,7 +11,7 @@ pub fn process_enum(input: &ItemEnum, cratename: Ident) -> syn::Result<TokenStre
     let name = &input.ident;
     let name_str = name.to_token_stream().to_string();
     let generics = &input.generics;
-    let (impl_generics, ty_generics, _) = generics.split_for_impl();
+    let (impl_generics, ty_generics, orig_where_clause) = generics.split_for_impl();
     // Generate function that returns the name of the type.
     let (declaration, where_clause) = declaration(&name_str, &input.generics, cratename.clone());
 
@@ -113,8 +113,18 @@ pub fn process_enum(input: &ItemEnum, cratename: Ident) -> syn::Result<TokenStre
             Self::add_definition(Self::declaration(), definition, definitions);
         }
     };
+    // The original where clause might already have a trailing punctuation
+    let orig_where_clause = if let Some(WhereClause{predicates, where_token: _, }) = orig_where_clause {
+        if predicates.trailing_punct() {
+            quote! {#predicates}
+        } else {
+            quote! {#predicates,}
+        }
+    } else {
+        TokenStream2::new()
+    };
     let where_clause = if !where_clause.is_empty() {
-        quote! { where #(#where_clause),*}
+        quote! { where #orig_where_clause #(#where_clause),*}
     } else {
         TokenStream2::new()
     };
